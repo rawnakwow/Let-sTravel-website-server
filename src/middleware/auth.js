@@ -1,53 +1,259 @@
-const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
-const { db, USERS_COLLECTION } = require("../config/db");
+const {
+  db,
+  USERS_COLLECTION,
+} = require("../config/db");
 
-let jwks;
-function getJwks() {
-  const url = process.env.BETTER_AUTH_JWKS_URL || `${process.env.CLIENT_URL}/api/auth/jwks`;
-  if (!jwks) jwks = createRemoteJWKSet(new URL(url));
-  return jwks;
+/* =====================================================
+   JOSE + JWKS CACHE
+===================================================== */
+
+let josePromise = null;
+let JWKS = null;
+
+function getJose() {
+  if (!josePromise) {
+    josePromise = import("jose");
+  }
+
+  return josePromise;
 }
 
-async function verifyToken(req, res, next) {
-  const header = req.headers.authorization || "";
-  if (!header.startsWith("Bearer ")) return res.status(401).json({ message: "Authentication required" });
+/* =====================================================
+   NORMALIZE URL
+===================================================== */
+
+function normalizeURL(value = "") {
+  return String(value)
+    .trim()
+    .replace(/\/+$/, "");
+}
+
+/* =====================================================
+   AUTH CONFIG
+===================================================== */
+
+function getAuthConfig() {
+  const clientURL = normalizeURL(
+    process.env.CLIENT_URL ||
+      "http://localhost:3000"
+  );
+
+  const issuer = normalizeURL(
+    process.env.BETTER_AUTH_ISSUER ||
+      clientURL
+  );
+
+  const audience = normalizeURL(
+    process.env.BETTER_AUTH_AUDIENCE ||
+      clientURL
+  );
+
+  const jwksURL =
+    process.env.BETTER_AUTH_JWKS_URL ||
+    `${clientURL}/api/auth/jwks`;
+
+  return {
+    clientURL,
+    issuer,
+    audience,
+    jwksURL,
+  };
+}
+
+/* =====================================================
+   VERIFY BETTER AUTH JWT
+===================================================== */
+
+async function verifyToken(
+  req,
+  res,
+  next
+) {
   try {
-    const issuer = process.env.BETTER_AUTH_ISSUER || (process.env.CLIENT_URL || "http://localhost:3000").split(",")[0].trim();
-    const audience = process.env.BETTER_AUTH_AUDIENCE || issuer;
-    const { payload } = await jwtVerify(header.slice(7), getJwks(), {
+    const authorization =
+      req.headers.authorization || "";
+
+    /* ---------------------------------
+       CHECK BEARER TOKEN
+    --------------------------------- */
+
+    if (
+      !authorization.startsWith(
+        "Bearer "
+      )
+    ) {
+      return res.status(401).json({
+        message:
+          "Authorization token missing",
+      });
+    }
+
+    const token = authorization
+      .slice(7)
+      .trim();
+
+    if (!token) {
+      return res.status(401).json({
+        message:
+          "Authorization token missing",
+      });
+    }
+
+    /* ---------------------------------
+       LOAD JOSE
+    --------------------------------- */
+
+    const {
+      jwtVerify,
+      createRemoteJWKSet,
+    } = await getJose();
+
+    const {
       issuer,
       audience,
-      clockTolerance: 5,
-    });
-    const email = payload.email;
-    const userId = payload.sub || payload.id;
-    if (!email || !userId) return res.status(401).json({ message: "Token identity is incomplete" });
-    const profile = await db().collection(USERS_COLLECTION).findOne({ email });
+      jwksURL,
+    } = getAuthConfig();
+
+    /* ---------------------------------
+       CREATE REMOTE JWKS
+    --------------------------------- */
+
+    if (!JWKS) {
+      JWKS = createRemoteJWKSet(
+        new URL(jwksURL)
+      );
+    }
+
+    /* ---------------------------------
+       VERIFY JWT
+    --------------------------------- */
+
+    const { payload } =
+      await jwtVerify(
+        token,
+        JWKS,
+        {
+          issuer,
+          audience,
+        }
+      );
+
+    /* ---------------------------------
+       REQUIRE EMAIL
+    --------------------------------- */
+
+    if (!payload.email) {
+      return res.status(401).json({
+        message:
+          "Invalid authentication token",
+      });
+    }
+
+    /* ---------------------------------
+       LOAD APPLICATION USER
+
+       Important:
+       Better Auth role and application
+       users collection role may differ.
+
+       Application DB role gets priority.
+    --------------------------------- */
+
+    let applicationUser = null;
+
+    try {
+      applicationUser = await db()
+        .collection(USERS_COLLECTION)
+        .findOne({
+          email: payload.email,
+        });
+    } catch (error) {
+      console.warn(
+        "Unable to load application user:",
+        error.message
+      );
+    }
+
+    /* ---------------------------------
+       ATTACH USER TO REQUEST
+    --------------------------------- */
+
     req.user = {
-      id: userId,
-      email,
-      name: payload.name,
-      role: profile?.role || payload.role || "user",
-      isFraud: Boolean(profile?.isFraud),
+      id:
+        payload.id ||
+        payload.sub,
+
+      email:
+        payload.email,
+
+      name:
+        payload.name ||
+        applicationUser?.name ||
+        "Traveller",
+
+      image:
+        payload.image ||
+        applicationUser?.image ||
+        null,
+
+      role:
+        applicationUser?.role ||
+        payload.role ||
+        "user",
+
+      isFraud:
+        applicationUser?.isFraud ??
+        payload.isFraud ??
+        false,
     };
+
     next();
-  } catch {
-    return res.status(401).json({ message: "Invalid or expired access token" });
+  } catch (error) {
+    console.error(
+      "JWT verification failed:",
+      {
+        name: error.name,
+        code: error.code,
+        message: error.message,
+      }
+    );
+
+    return res.status(401).json({
+      message:
+        "Invalid or expired access token",
+    });
   }
 }
 
-function allowRoles(...roles) {
+/* =====================================================
+   ROLE AUTHORIZATION
+===================================================== */
+
+function allowRoles(...allowedRoles) {
   return (req, res, next) => {
-    if (!roles.includes(req.user?.role)) return res.status(403).json({ message: "You do not have permission" });
+    if (!req.user) {
+      return res.status(401).json({
+        message:
+          "Authentication required",
+      });
+    }
+
+    if (
+      !allowedRoles.includes(
+        req.user.role
+      )
+    ) {
+      return res.status(403).json({
+        message:
+          "You do not have permission to perform this action",
+      });
+    }
+
     next();
   };
 }
 
-function blockFraudVendor(req, res, next) {
-  if (req.user?.role === "vendor" && req.user.isFraud) {
-    return res.status(403).json({ message: "This vendor account has been marked as fraud" });
-  }
-  next();
-}
-
-module.exports = { verifyToken, allowRoles, blockFraudVendor };
+module.exports = {
+  verifyToken,
+  allowRoles,
+};
