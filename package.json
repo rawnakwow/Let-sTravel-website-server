@@ -1,0 +1,23 @@
+{
+  "name": "jatrago-server",
+  "version": "1.0.0",
+  "description": "Express API for the Let'sTravel online ticket booking platform",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "check": "node --check src/server.js && node --check src/app.js",
+    "test": "node --test",
+    "seed": "node src/scripts/seed.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "jose-cjs": "^6.2.3",
+    "mongodb": "^7.3.0",
+    "stripe": "^22.3.1"
+  },
+  "devDependencies": { "nodemon": "^3.1.10" }
+}
