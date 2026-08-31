@@ -69,18 +69,9 @@ async function verifyToken(req, res, next) {
     const authorization =
       req.headers.authorization || "";
 
-    /* ---------------------------------
-       CHECK BEARER TOKEN
-    --------------------------------- */
-
-    if (
-      !authorization.startsWith(
-        "Bearer "
-      )
-    ) {
+    if (!authorization.startsWith("Bearer ")) {
       return res.status(401).json({
-        message:
-          "Authorization token missing",
+        message: "Authorization token missing",
       });
     }
 
@@ -90,14 +81,13 @@ async function verifyToken(req, res, next) {
 
     if (!token) {
       return res.status(401).json({
-        message:
-          "Authorization token missing",
+        message: "Authorization token missing",
       });
     }
 
-    /* ---------------------------------
+    /* -------------------------------
        LOAD JOSE
-    --------------------------------- */
+    -------------------------------- */
 
     const {
       jwtVerify,
@@ -110,9 +100,9 @@ async function verifyToken(req, res, next) {
       jwksURL,
     } = getAuthConfig();
 
-    /* ---------------------------------
-       CREATE REMOTE JWKS
-    --------------------------------- */
+    /* -------------------------------
+       CREATE JWKS
+    -------------------------------- */
 
     if (!JWKS) {
       JWKS = createRemoteJWKSet(
@@ -120,34 +110,25 @@ async function verifyToken(req, res, next) {
       );
     }
 
-    /* ---------------------------------
+    /* -------------------------------
        VERIFY JWT
-    --------------------------------- */
+    -------------------------------- */
 
     const { payload } =
-      await jwtVerify(
-        token,
-        JWKS,
-        {
-          issuer,
-          audience,
-        }
-      );
-
-    /* ---------------------------------
-       REQUIRE EMAIL
-    --------------------------------- */
+      await jwtVerify(token, JWKS, {
+        issuer,
+        audience,
+      });
 
     if (!payload.email) {
       return res.status(401).json({
-        message:
-          "Invalid authentication token",
+        message: "Invalid authentication token",
       });
     }
 
-    /* ---------------------------------
-       LOAD APPLICATION USER
-    --------------------------------- */
+    /* -------------------------------
+       GET APPLICATION USER
+    -------------------------------- */
 
     let applicationUser = null;
 
@@ -164,9 +145,9 @@ async function verifyToken(req, res, next) {
       );
     }
 
-    /* ---------------------------------
-       ATTACH USER TO REQUEST
-    --------------------------------- */
+    /* -------------------------------
+       ATTACH USER
+    -------------------------------- */
 
     req.user = {
       id:
@@ -210,8 +191,7 @@ async function verifyToken(req, res, next) {
     );
 
     return res.status(401).json({
-      message:
-        "Invalid or expired access token",
+      message: "Invalid or expired access token",
     });
   }
 }
@@ -224,16 +204,11 @@ function allowRoles(...allowedRoles) {
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({
-        message:
-          "Authentication required",
+        message: "Authentication required",
       });
     }
 
-    if (
-      !allowedRoles.includes(
-        req.user.role
-      )
-    ) {
+    if (!allowedRoles.includes(req.user.role)) {
       return res.status(403).json({
         message:
           "You do not have permission to perform this action",
@@ -245,18 +220,13 @@ function allowRoles(...allowedRoles) {
 }
 
 /* =====================================================
-   BLOCK FRAUD VENDORS
+   BLOCK FRAUD VENDOR
 ===================================================== */
 
-function blockFraudVendor(
-  req,
-  res,
-  next
-) {
+function blockFraudVendor(req, res, next) {
   if (!req.user) {
     return res.status(401).json({
-      message:
-        "Authentication required",
+      message: "Authentication required",
     });
   }
 
