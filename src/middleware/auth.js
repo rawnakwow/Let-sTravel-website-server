@@ -64,11 +64,7 @@ function getAuthConfig() {
    VERIFY BETTER AUTH JWT
 ===================================================== */
 
-async function verifyToken(
-  req,
-  res,
-  next
-) {
+async function verifyToken(req, res, next) {
   try {
     const authorization =
       req.headers.authorization || "";
@@ -151,12 +147,6 @@ async function verifyToken(
 
     /* ---------------------------------
        LOAD APPLICATION USER
-
-       Important:
-       Better Auth role and application
-       users collection role may differ.
-
-       Application DB role gets priority.
     --------------------------------- */
 
     let applicationUser = null;
@@ -187,13 +177,14 @@ async function verifyToken(
         payload.email,
 
       name:
-        payload.name ||
         applicationUser?.name ||
+        payload.name ||
         "Traveller",
 
       image:
-        payload.image ||
+        applicationUser?.profileImage ||
         applicationUser?.image ||
+        payload.image ||
         null,
 
       role:
@@ -253,7 +244,38 @@ function allowRoles(...allowedRoles) {
   };
 }
 
+/* =====================================================
+   BLOCK FRAUD VENDORS
+===================================================== */
+
+function blockFraudVendor(
+  req,
+  res,
+  next
+) {
+  if (!req.user) {
+    return res.status(401).json({
+      message:
+        "Authentication required",
+    });
+  }
+
+  if (req.user.isFraud) {
+    return res.status(403).json({
+      message:
+        "Your vendor account has been restricted",
+    });
+  }
+
+  next();
+}
+
+/* =====================================================
+   EXPORTS
+===================================================== */
+
 module.exports = {
   verifyToken,
   allowRoles,
+  blockFraudVendor,
 };
